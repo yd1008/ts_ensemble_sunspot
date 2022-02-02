@@ -50,12 +50,14 @@ def train(config, checkpoint_dir):
     random.seed(1008) 
     torch.manual_seed(1008)
 
-    train_proportion = 0.6
-    test_proportion = 0.2
-    val_proportion = 0.2
+    train_proportion = 0.7
+    test_proportion = 0
+    val_proportion = 0.3
 
     batch_size = config['batch_size']
     lr = config['lr']
+    lr_decay = config['lr_decay']
+    optim_step = config['optim_step']
     window_size = config['window_size']
 
     feature_size = config['feature_size']
@@ -73,22 +75,15 @@ def train(config, checkpoint_dir):
     if torch.cuda.is_available():
         device = "cuda:0"
         if torch.cuda.device_count() > 1:
-            model = nn.DataParallel(model)
+            torch.distributed.init_process_group()
+            model = nn.parallel.DistributedDataParallel(model)
     model.to(device)
     epochs = 150
     criterion = nn.MSELoss() ######MAELoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, 20, gamma=0.95)
-    #writer = tensorboard.SummaryWriter('./test_logs')
-    
-    # if checkpoint_dir:
-    #     checkpoint = os.path.join(checkpoint_dir, "checkpoint")
-    #     model_state, optimizer_state = torch.load(checkpoint)
-    #     model.load_state_dict(model_state)
-    #     optimizer.load_state_dict(optimizer_state)
-        
+    scheduler = optim.lr_scheduler.StepLR(optimizer, optim_step, gamma=lr_decay)
     train_loader,val_loader, test_loader = get_data_loaders(train_proportion, test_proportion, val_proportion,\
-         window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 2, pin_memory = True)
+         window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 1, pin_memory = True, use_nasa_test_range = 'non_nasa_no_test')
 
     assert device == "cuda:0"
     for epoch in range(1, epochs + 1):
@@ -125,9 +120,9 @@ if __name__ == "__main__":
         'num_head':tune.choice([2,4,8]),
         'd_ff':tune.choice([216,512,1024]),
         'dropout':tune.choice([0.1,0.2]),
-        'lr':tune.grid_search([1e-3,5e-4,1e-4,5e-5,1e-5]),
+        'lr':tune.choice([1e-3,5e-4,1e-4,5e-5,1e-5]),
         'window_size':tune.choice([192]),
-        'batch_size':tune.grid_search([16,32,64,128,256]),
+        'batch_size':tune.choice([16,32,64,128,256]),
         'optim_step': tune.choice([2,5,10,15,20]), 
         'lr_decay': tune.choice([0.95,0.9,0.85,0.8,0.75,0.7]),
 }
@@ -137,7 +132,7 @@ if __name__ == "__main__":
             grace_period=10,
             reduction_factor=2)
     analysis = tune.run(tune.with_parameters(train), config=config, num_samples=1000, metric='val_loss', mode='min',\
-         scheduler=sched, resources_per_trial={"cpu": 12,"gpu": 1/2},max_concurrent_trials=4, max_failures=1000, local_dir="/scratch/yd1008/ray_results",)
+         scheduler=sched, resources_per_trial=tune.PlacementGroupFactory([{"CPU": 6, "GPU": 0.5}]),max_concurrent_trials=8, max_failures=1000, local_dir="/scratch/yd1008/ray_results",)
 
     best_trail = analysis.get_best_config(mode='min')
     print('The best configs are: ',best_trail)

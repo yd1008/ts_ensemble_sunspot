@@ -23,34 +23,16 @@ def evaluate(model,data_loader,criterion,window_size,scaler):
     if torch.cuda.is_available():
         device = "cuda:0"
         if torch.cuda.device_count() > 1:
-            model = nn.DataParallel(model)
+            model = nn.parallel.DistributedDataParallel(model)
     with torch.no_grad():
         for i, (data,targets) in enumerate(data_loader):
-            if i == 0:
-                enc_in = data
-                dec_in = targets
-                test_rollout = targets
-            else:
-                enc_in = test_rollout[:,-window_size:,:]
-                dec_in = torch.zeros([enc_in.shape[0], 1, enc_in.shape[-1]]).float()
-                dec_in = torch.cat([enc_in[:,:(window_size-1),:], dec_in], dim=1).float()
-                #dec_in = enc_in[:,:(window_size-1),:]
-            enc_in, dec_in, targets = enc_in.to(device), dec_in.to(device), targets.to(device)
+            enc_in, dec_in = data.clone().to(device), targets.clone().to(device)
+            targets = targets.to(device)
+            dec_in = torch.cat([dec_in[:,:(window_size-1),:], torch.zeros([dec_in.shape[0], 1, dec_in.shape[-1]]).to(device)], dim=1).float().to(device)
             output = model(enc_in, dec_in)
 
             total_loss += criterion(output[:,-1:,:], targets[:,-1:,:]).detach().cpu().numpy()
-
-            test_rollout = torch.cat([test_rollout,output[:,-1:,:].detach().cpu()],dim = 1)
-            test_result = torch.cat((test_result, output[:,-1,:].view(-1).detach().cpu()), 0)
-            truth = torch.cat((truth, targets[:,-1,:].view(-1).detach().cpu()), 0)
-    
-    test_result = test_result.numpy()
-    test_result = scaler.inverse_transform(test_result)
-    truth = truth.numpy()
-    truth = scaler.inverse_transform(truth)
-    RMSE = mean_squared_error(truth, test_result)**0.5
-
-    return total_loss, RMSE
+    return total_loss
 
 
 def train(config, checkpoint_dir):
@@ -60,9 +42,9 @@ def train(config, checkpoint_dir):
     random.seed(1008) 
     torch.manual_seed(1008)
     
-    train_proportion = 0.6
-    test_proportion = 0.2
-    val_proportion = 0.2
+    train_proportion = 0.7
+    test_proportion = 0
+    val_proportion = 0.3
 
     lr = config['lr']
     lr_decay = config['lr_decay']
@@ -103,8 +85,8 @@ def train(config, checkpoint_dir):
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, optim_step, gamma=lr_decay)
     
-    train_loader, _, val_loader, scaler = get_data_loaders(train_proportion, test_proportion, val_proportion,\
-         window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 2, pin_memory = True, test_mode = True)
+    train_loader, val_loader, test_loader, scaler = get_data_loaders(train_proportion, test_proportion, val_proportion,\
+         window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 1, pin_memory = True, test_mode = False, use_nasa_test_range = 'non_nasa_no_test')
 
     assert device == "cuda:0"
     for epoch in range(1, epochs + 1):
@@ -123,8 +105,8 @@ def train(config, checkpoint_dir):
             loss.backward()
             optimizer.step()
             
-        val_loss, RMSE = evaluate(model, val_loader, criterion, window_size,scaler)
-        tune.report(rmse=RMSE)
+        val_loss = evaluate(model, val_loader, criterion, window_size,scaler)
+        tune.report(rmse=val_loss/len(val_loader.dataset))
         scheduler.step() 
 
 
@@ -135,7 +117,7 @@ if __name__ == "__main__":
         'e_layers':tune.choice([2,3,4,5]),
         'd_layers':tune.choice([2,3,4,5]),
         'd_ff':tune.choice([128,216,512,1024]),
-        'window_size':tune.choice([192])
+        'window_size':tune.choice([192]),
         'dropout':tune.choice([0.1,0.2]),
         'lr': tune.choice([1e-3,1e-4,1e-5,1e-6]),
         'optim_step': tune.choice([2,5,10,15,20]), 
@@ -145,15 +127,11 @@ if __name__ == "__main__":
 }
     ray.init(ignore_reinit_error=False, include_dashboard=True, dashboard_host= '0.0.0.0')
     sched = ASHAScheduler(
-            max_t=80,
+            max_t=100,
             grace_period=10,
             reduction_factor=2)
     analysis = tune.run(tune.with_parameters(train), config=config, num_samples=1000 ,metric='rmse', mode='min',\
-         scheduler=sched, resources_per_trial=tune.PlacementGroupFactory([{"CPU": 12, "GPU": 0.5}]),max_concurrent_trials = 4, queue_trials = True, max_failures=200, local_dir="/scratch/yd1008/ray_results",)
-
-    # analysis = tune.run(tune.with_parameters(train), config=config, metric='val_loss', mode='min',\
-    #      scheduler=sched, resources_per_trial={"gpu": 0.5},max_concurrent_trials=6, max_failures=1000,queue_trials = True,local_dir="/scratch/yd1008/ray_results",)
-
+         scheduler=sched, resources_per_trial=tune.PlacementGroupFactory([{"CPU": 6, "GPU": 0.5}]),max_concurrent_trials = 8, queue_trials = True, max_failures=200, local_dir="",) #specify where tune results will be saved
     best_trail = analysis.get_best_config(mode='min')
     print('The best configs are: ',best_trail)
     ray.shutdown()

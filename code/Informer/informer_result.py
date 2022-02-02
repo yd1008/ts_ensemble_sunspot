@@ -9,6 +9,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time
+import argparse
 from informer import Informer
 from utils import *
 
@@ -131,21 +132,42 @@ class early_stopping():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--requires_training", default=False, action="store_true")
+    parser.add_argument("--use_pre_trained", default=False, action="store_true")
+    parser.add_argument("--use_nasa_test_range", default=False, action="store_true")
+    parser.add_argument("--pre_trained_file_name")
+    args = parser.parse_args()
+
+    requires_training = args.requires_training
+    use_pre_trained = args.use_pre_trained
+    pre_trained_file_name = args.pre_trained_file_name
+    use_nasa_test_range = args.use_nasa_test_range 
+
     torch.cuda.manual_seed(1008)
     torch.cuda.manual_seed_all(1008)  
     np.random.seed(1008)  
     random.seed(1008) 
     torch.manual_seed(1008)
 
-    root_dir = '/scratch/yd1008/sunspot_informer/informer/tune_results'
+    root_dir = '' #specify where results will be saved
     sns.set_style("whitegrid")
     sns.set_palette(['#57068c','#E31212','#01AD86'])
     print('pytorch version: ', torch.__version__)
-    best_config =  {'d_model': 216, 'n_heads': 4, 'e_layers': 4, 'd_layers': 2, 'd_ff': 216, 'window_size': 192, 'dropout': 0.1, 'lr': 0.0001, 'optim_step': 2, 'lr_decay': 0.7, 'factor': 3, 'batch_size': 128}
+
+    #1999
+    #best_config = {'d_model': 512, 'n_heads': 2, 'e_layers': 2, 'd_layers': 4, 'd_ff': 512, 'window_size': 192, 'dropout': 0.2, 'lr': 0.0001, 'optim_step': 10, 'lr_decay': 0.8, 'factor': 6, 'batch_size': 128}
+    # train_proportion = 0.6
+    # test_proportion = 0.2
+    # val_proportion = 0.2
+    #future
+    best_config = {'d_model': 1024, 'n_heads': 8, 'e_layers': 2, 'd_layers': 5, 'd_ff': 512, 'window_size': 192, 'dropout': 0.2, 'lr': 1e-05, 'optim_step': 15, 'lr_decay': 0.85, 'factor': 9, 'batch_size': 128}
+    train_proportion = 0.7
+    test_proportion = 0
+    val_proportion = 0.3
+    
     print(f'Config: {best_config}')
-    train_proportion = 0.6
-    test_proportion = 0.2
-    val_proportion = 0.2
+
     lr = best_config['lr']
     optim_step = best_config['optim_step']
     lr_decay = best_config['lr_decay']
@@ -165,95 +187,94 @@ if __name__ == "__main__":
     d_ff = best_config['d_ff']
     dropout = best_config['dropout']
 
+    train_val_loader, train_loader, val_loader, test_loader,scaler = get_data_loaders(train_proportion, test_proportion, val_proportion,\
+            window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 1, pin_memory = True, test_mode = True, use_nasa_test_range=use_nasa_test_range)
+   
+    if requires_training:
+        if use_pre_trained:
+            model = torch.load(pre_trained_file_name)
+        else:
+            model = Informer(enc_channel_in, dec_channel_in, channel_out, seq_len, label_len, out_len, 
+                        factor, d_model, n_heads, e_layers, d_layers, d_ff, 
+                        dropout, attn='prob', embed='fixed', freq='m', activation='gelu', 
+                        output_attention = False, distil=True,
+                        device=torch.device('cuda:0'))
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda:0"
+            if torch.cuda.device_count() > 1:
+                model = nn.DataParallel(model)
+        print('Using device: ',device)
+        model.to(device)
 
-    
+        criterion = nn.MSELoss()
+        optimizer = optim.AdamW(model.parameters(), lr=lr)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, optim_step, gamma=lr_decay)
 
- 
-  
-
-    model = Informer(enc_channel_in, dec_channel_in, channel_out, seq_len, label_len, out_len, 
-                    factor, d_model, n_heads, e_layers, d_layers, d_ff, 
-                    dropout, attn='prob', embed='fixed', freq='m', activation='gelu', 
-                    output_attention = False, distil=True,
-                    device=torch.device('cuda:0'))
-
-    device = "cpu"
-    if torch.cuda.is_available():
-        device = "cuda:0"
-        if torch.cuda.device_count() > 1:
-            model = nn.DataParallel(model)
-    print('Using device: ',device)
-    model.to(device)
-
-    criterion = nn.MSELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, optim_step, gamma=lr_decay)
-    writer = tensorboard.SummaryWriter('/scratch/yd1008/tensorboard_output/')
-
-        
-    train_loader, val_loader, test_loader, scaler = get_data_loaders(train_proportion, test_proportion, val_proportion,\
-        window_size=window_size, pred_size =1, batch_size=batch_size, num_workers = 1, pin_memory = False, test_mode = True)
-
-    epochs = 200
-    train_losses = []
-    test_losses = []
-    tolerance = 10
-    best_test_loss = float('inf')
-    Early_Stopping = early_stopping(patience=20)
-    for epoch in range(1, epochs + 1):
-        model.train() 
-        total_loss = 0.
-        
-        for i,(data, targets) in enumerate(train_loader):
+        epochs = 200
+        train_losses = []
+        test_losses = []
+        tolerance = 10
+        best_test_loss = float('inf')
+        Early_Stopping = early_stopping(patience=20)
+        for epoch in range(1, epochs + 1):
+            model.train() 
+            total_loss = 0.
+            
+            for i,(data, targets) in enumerate(train_val_loader):
 
 
-            data, targets = data.to(device), targets.to(device)
-            optimizer.zero_grad()
-            output, truth = process_one_batch(data,targets)
-            loss = criterion(output[:,-1,:], targets[:,-1,:])
-            total_loss += loss.item()
-            loss.backward()
-            optimizer.step()
+                data, targets = data.to(device), targets.to(device)
+                optimizer.zero_grad()
+                output, truth = process_one_batch(data,targets)
+                loss = criterion(output[:,-1,:], targets[:,-1,:])
+                total_loss += loss.item()
+                loss.backward()
+                optimizer.step()
 
 
-        if (epoch%10 == 0):
-            print(f'Saving prediction for epoch {epoch}')
-            predict_model(model, test_loader, window_size, epoch, plot=True)    
+            if (epoch%10 == 0) & (use_nasa_test_range != 'non_nasa_no_test'):
+                print(f'Saving prediction for epoch {epoch}')
+                predict_model(model, test_loader, window_size, epoch, plot=True)    
 
 
-        train_losses.append(total_loss*batch_size/len(train_loader.dataset))
-        test_loss = evaluate(model, test_loader, criterion, scaler)
-        test_losses.append(test_loss/len(test_loader.dataset))
+            train_losses.append(total_loss*batch_size/len(train_val_loader.dataset))
+            test_loss = evaluate(model, test_loader, criterion, scaler)
+            test_losses.append(test_loss/len(test_loader.dataset))
 
 
-        if epoch==1: ###DEBUG
-            print(f'Total of {len(train_loader.dataset)} samples in training set and {len(test_loader.dataset)} samples in test set',flush=True)
+            if epoch==1: ###DEBUG
+                print(f'Total of {len(train_val_loader.dataset)} samples in training set and {len(test_loader.dataset)} samples in test set',flush=True)
 
 
-        print(f'Epoch: {epoch}, train_loss: {total_loss*batch_size/len(train_loader.dataset)}, test_loss: {test_loss/len(test_loader.dataset)}, lr: {scheduler.get_last_lr()},flush=True)
+            print(f'Epoch: {epoch}, train_loss: {total_loss*batch_size/len(train_val_loader.dataset)}, test_loss: {test_loss/len(test_loader.dataset)}, lr: {scheduler.get_last_lr()}',flush=True)
 
 
-        Early_Stopping(model, test_loss/len(test_loader))
-        if Early_Stopping.early_stop:
-            break
+            Early_Stopping(model, test_loss/len(test_loader))
+            if Early_Stopping.early_stop:
+                break
 
-        if epoch%1== 0:
-            scheduler.step() 
+            if epoch%1== 0:
+                scheduler.step() 
 
 
-### Plot losses        
-    model = torch.load('best_inf.pth')
-        
-    xs = np.arange(len(train_losses))
-    fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
-    ax.plot(xs,train_losses)
-    fig.savefig(root_dir + '/figs/informer_train_loss.png')
-    plt.close(fig)
-    fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
-    ax.plot(xs,test_losses)
-    fig.savefig(root_dir + '/figs/informer_test_loss.png')
-    plt.close(fig)
+    ## Plot losses                
+        xs = np.arange(len(train_losses))
+        fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
+        ax.plot(xs,train_losses)
+        fig.savefig(root_dir + '/figs/informer_train_loss.png')
+        plt.close(fig)
+        fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
+        ax.plot(xs,test_losses)
+        fig.savefig(root_dir + '/figs/informer_test_loss.png')
+        plt.close(fig)
+
+
 ### Predict
+    if not requires_training: 
+        model = torch.load(pre_trained_file_name)
+    else:
+        model = torch.load('best_inf.pth')
     model.eval()
     test_rollout = torch.Tensor(0)   
     test_result = torch.Tensor(0)  
@@ -273,7 +294,7 @@ if __name__ == "__main__":
                 enc_in = test_rollout[:,-window_size:,:]
                 dec_in = torch.zeros([enc_in.shape[0], 1, enc_in.shape[-1]]).float()
                 dec_in = torch.cat([enc_in[:,:(window_size-1),:], dec_in], dim=1).float()
-                #dec_in = enc_in[:,:(window_size-1),:]
+                
             enc_in, dec_in, targets = enc_in.to(device), dec_in.to(device), targets.to(device)
             output = model(enc_in, dec_in)
 
@@ -295,29 +316,48 @@ if __name__ == "__main__":
                 enc_in = val_rollout[:,-window_size:,:]
                 dec_in = torch.zeros([enc_in.shape[0], 1, enc_in.shape[-1]]).float()
                 dec_in = torch.cat([enc_in[:,:(window_size-1),:], dec_in], dim=1).float()
-            enc_in, dec_in, targets = enc_in.to(device), dec_in.to(device), targets.to(device)
-            output = model(enc_in, dec_in)
+            data, targets = data.to(device), targets.to(device)
+            output, _ = process_one_batch(data,targets)
 
             val_rollout = torch.cat([val_rollout,output[:,-1:,:].detach().cpu()],dim = 1)
             val_result = torch.cat((val_result, output[:,-1,:].view(-1).detach().cpu()), 0)
             val_truth = torch.cat((val_truth, targets[:,-1,:].view(-1).detach().cpu()), 0)
             
-    ### Plot prediction
-    fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
-    ax.plot(test_result,label='forecast')
-    ax.plot(truth,label = 'truth')
-    ax.plot(test_result-truth,ls='--',label='residual')
-    #ax.grid(True, which='both')
-    ax.axhline(y=0)
-    ax.legend(loc="upper right")
-    fig.savefig(root_dir + '/figs/informer_pred.png')
-    plt.close(fig)
+    train_rollout = torch.Tensor(0)   
+    train_result = torch.Tensor(0)  
+    train_truth = torch.Tensor(0)
+
+    with torch.no_grad():
+        for i, (data,targets) in enumerate(train_loader):
+            if i == 0:
+                enc_in = data
+                dec_in = targets
+                train_rollout = targets
+            else:
+                enc_in = train_rollout[:,-window_size:,:]
+                dec_in = torch.zeros([enc_in.shape[0], 1, enc_in.shape[-1]]).float()
+                dec_in = torch.cat([enc_in[:,:(window_size-1),:], dec_in], dim=1).float()
+            data, targets = data.to(device), targets.to(device)
+            output, _ = process_one_batch(data,targets)
+
+            train_rollout = torch.cat([train_rollout,output[:,-1:,:].detach().cpu()],dim = 1)
+            train_result = torch.cat((train_result, output[:,-1,:].view(-1).detach().cpu()), 0)
+            train_truth = torch.cat((train_truth, targets[:,-1,:].view(-1).detach().cpu()), 0)
 
 ### Check MSE, MAE
+    val_result = val_result.numpy()
+    val_result = scaler.inverse_transform(val_result)
     test_result = test_result.numpy()
     test_result = scaler.inverse_transform(test_result)
+    train_result = train_result.numpy()
+    train_result = scaler.inverse_transform(train_result)
     truth = truth.numpy()
     truth = scaler.inverse_transform(truth)
+    train_truth = train_truth.numpy()
+    train_truth = scaler.inverse_transform(train_truth)
+    val_truth = val_truth.numpy()
+    val_truth = scaler.inverse_transform(val_truth)
+
     RMSE = mean_squared_error(truth, test_result)**0.5
     MAE = mean_absolute_error(truth, test_result)
     RMSE_first_window = mean_squared_error(truth[:window_size+1], test_result[:window_size+1])**0.5
@@ -334,12 +374,31 @@ if __name__ == "__main__":
     ax.axhline(y=0)
     ax.legend(loc="upper right")
     fig.savefig(root_dir + '/figs/informer_inversed_pred.png')
+
+    fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
+    ax.plot(val_result,label='forecast')
+    ax.plot(val_truth,label = 'truth')
+    ax.plot(val_result-val_truth,ls='--',label='residual')
+    ax.axhline(y=0)
+    ax.legend(loc="upper right")
+    fig.savefig(root_dir + '/figs/informer_val_inverse_prediction.png')
+
+    fig, ax = plt.subplots(nrows =1, ncols=1, figsize=(20,10))
+    ax.plot(train_result,label='forecast')
+    ax.plot(train_truth,label = 'truth')
+    ax.plot(train_result-train_truth,ls='--',label='residual')
+    ax.axhline(y=0)
+    ax.legend(loc="upper right")
+    fig.savefig(root_dir + '/figs/informer_train_inverse_prediction.png')
+
     plt.close(fig)
 ### Save model result
-    val_result = val_result.numpy()
-    val_result = scaler.inverse_transform(val_result)
-    val_truth = val_truth.numpy()
-    val_truth = scaler.inverse_transform(val_truth)
+
+
+    train_result_df = pd.DataFrame(train_result)
+    train_result_df.to_csv(root_dir + '/informer_train_prediction.csv')
+    train_truth_df = pd.DataFrame(train_truth)
+    train_truth_df.to_csv(root_dir + '/sunspot_train_truth.csv')
 
     val_result_df = pd.DataFrame(val_result)
     val_result_df.to_csv(root_dir + '/informer_val_prediction.csv')

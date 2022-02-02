@@ -316,7 +316,6 @@ class EncoderStack(nn.Module):
         self.inp_lens = inp_lens
 
     def forward(self, x, attn_mask=None):
-        # x [B, L, D]
         x_stack = []; attns = []
         for i_len, encoder in zip(self.inp_lens, self.encoders):
             inp_len = x.shape[1]//(2**i_len)
@@ -426,8 +425,6 @@ class Informer(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(d_model)
         )
-        # self.end_conv1 = nn.Conv1d(in_channels=label_len+out_len, out_channels=out_len, kernel_size=1, bias=True)
-        # self.end_conv2 = nn.Conv1d(in_channels=d_model, out_channels=c_out, kernel_size=1, bias=True)
         self.projection = nn.Linear(d_model, c_out, bias=True)
         
     def forward(self, x_enc, x_dec, 
@@ -444,5 +441,4 @@ class Informer(nn.Module):
         if self.output_attention:
             return dec_out[:,-self.pred_len:,:], attns
         else:
-            return dec_out[:,-self.pred_len:,:] # [B, L, D]
-
+            return dec_out[:,-self.pred_len:,:] 
