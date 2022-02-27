@@ -154,16 +154,13 @@ if __name__ == "__main__":
     sns.set_style("whitegrid")
     sns.set_palette(['#57068c','#E31212','#01AD86'])
     print('pytorch version: ', torch.__version__)
-
-    #1999
-    #best_config = {'d_model': 512, 'n_heads': 2, 'e_layers': 2, 'd_layers': 4, 'd_ff': 512, 'window_size': 192, 'dropout': 0.2, 'lr': 0.0001, 'optim_step': 10, 'lr_decay': 0.8, 'factor': 6, 'batch_size': 128}
-    # train_proportion = 0.6
-    # test_proportion = 0.2
-    # val_proportion = 0.2
+    #test
+    # best_config = {'d_model': 216, 'n_heads': 2, 'e_layers': 3, 'd_layers': 3, 'd_ff': 1024, 'window_size': 192, 'dropout': 0.2, 'lr': 0.0001, 'optim_step': 5, 'lr_decay': 0.9, 'factor': 9, 'batch_size': 128}
     #future
-    best_config = {'d_model': 1024, 'n_heads': 8, 'e_layers': 2, 'd_layers': 5, 'd_ff': 512, 'window_size': 192, 'dropout': 0.2, 'lr': 1e-05, 'optim_step': 15, 'lr_decay': 0.85, 'factor': 9, 'batch_size': 128}
+    best_config = {'d_model': 512, 'n_heads': 4, 'e_layers': 2, 'd_layers': 4, 'd_ff': 512, 'window_size': 192, 'dropout': 0.2, 'lr': 0.0001, 'optim_step': 10, 'lr_decay': 0.75, 'factor': 9, 'batch_size': 128}
+
     train_proportion = 0.7
-    test_proportion = 0
+    test_proportion = 0 #test_size is fixed to same as NASA's range and train+val will fill out the rest of the time points if use_nasa_test_range = True. 
     val_proportion = 0.3
     
     print(f'Config: {best_config}')

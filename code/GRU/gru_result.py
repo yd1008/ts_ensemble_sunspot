@@ -118,15 +118,14 @@ if __name__ == "__main__":
     sns.set_style("whitegrid")
     sns.set_palette(['#57068c','#E31212','#01AD86'])
     root_dir = '' #specify where results will be saved
-    #1999
-    # best_config = {'hidden_size': 512, 'num_layers': 1, 'dropout': 0.1, 'window_size': 192, 'lr': 0.001, 'batch_size': 128, 'optim_step': 2, 'lr_decay': 0.8}
-    # train_proportion = 0.6
-    # test_proportion = 0.2
-    # val_proportion = 0.2
+    #test
+    # best_config = {'hidden_size': 1024, 'num_layers': 1, 'dropout': 0.2, 'window_size': 192, 'lr': 0.0005, 'batch_size': 128, 'optim_step': 2, 'lr_decay': 0.8}
     #future
-    best_config = {'hidden_size': 1024, 'num_layers': 1, 'dropout': 0.2, 'window_size': 192, 'lr': 1e-05, 'batch_size': 128, 'optim_step': 20, 'lr_decay': 0.9}
+    best_config = {'hidden_size': 512, 'num_layers': 1, 'dropout': 0.2, 'window_size': 192, 'lr': 0.001, 'batch_size': 128, 'optim_step': 2, 'lr_decay': 0.75}
+
+
     train_proportion = 0.7
-    test_proportion = 0
+    test_proportion = 0 #test_size is fixed to same as NASA's range and train+val will fill out the rest of the time points if use_nasa_test_range = True. 
     val_proportion = 0.3
 
     input_size = 1#best_config['input_size']
