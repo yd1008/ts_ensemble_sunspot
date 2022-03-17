@@ -1,4 +1,6 @@
-# ts_ensemble_sunspot
+# A comparative study of non-deep learning, deep learning, and ensemble learning methods for sunspot number prediction
+
+### Link to full paper: [arxiv](https://arxiv.org/abs/2203.05757)
 
 **Requirements**
  - Python 3.8
