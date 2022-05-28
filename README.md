@@ -1,6 +1,6 @@
 # A comparative study of non-deep learning, deep learning, and ensemble learning methods for sunspot number prediction
 
-### Link to full paper: [arxiv](https://arxiv.org/abs/2203.05757)
+### Link to full paper: [Y. Dang, Z. Chen, H. Li, H. Shu (2022). *Applied Artificial Intelligence*, 36(1), e2074129](https://doi.org/10.1080/08839514.2022.2074129)
 
 **Requirements**
  - Python 3.8
